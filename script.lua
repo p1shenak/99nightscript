@@ -1,20 +1,20 @@
 --[[
-    FONDI HUB — 99 Nights in the Forest
+    FONDI HUB FIX — 99 Nights in the Forest
     Полностью открытый код. Без обфускации.
     
     Возможности:
     - Плавное появление с масштабированием
-    - Градиентный фон + светящаяся рамка (пульсация)
+    - Градиент внутри окна (не перекрывает игру)
+    - Светящаяся рамка (пульсация)
     - Боковые вкладки с подсветкой активной
-    - Hover-анимации кнопок (сдвиг + свечение)
-    - Анимированные тогглы (кружок ездит)
-    - Поиск предметов с карточками (имя, класс, дистанция, кнопка "Bring")
-    - Счётчик найденных предметов
-    - Всплывающие уведомления (сверху справа)
-    - Bring через Model (если есть), иначе через BasePart
-    - Settings: цвет ESP, прозрачность, радиус, имена
+    - Hover-анимации кнопок
+    - Анимированные тогглы
+    - Поиск предметов с карточками
+    - Счётчик найденных
+    - Всплывающие уведомления
+    - Bring через Model / BasePart
+    - Settings: цвет ESP, радиус, сброс
     - Горячая клавиша RightShift — показать/скрыть
-    - Плавное закрытие окна
 --]]
 
 --// ========== СЕРВИСЫ ==========
@@ -67,15 +67,12 @@ local function getDistance(object)
     return math.floor((object.Position - hrp.Position).Magnitude)
 end
 
---// Получить "реальный" объект для Bring (Model или BasePart)
 local function getBringTarget(object)
     if not object then return nil end
-    -- Если родитель — Model и в нём есть PrimaryPart, тянем всю модель
     local parent = object.Parent
     if parent and parent:IsA("Model") and parent.PrimaryPart then
         return parent, true
     end
-    -- Если родитель — Model без PrimaryPart, но с несколькими частями — берём модель
     if parent and parent:IsA("Model") then
         return parent, true
     end
@@ -160,19 +157,17 @@ local function bringObject(object)
     local targetPos = hrp.Position + Vector3.new(0, 4, 0)
 
     if isModel then
-        -- Перемещаем всю модель
         local primary = target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")
         if not primary then return false end
-        local offset = target:GetPivot().Position - primary.Position
-        local goal = CFrame.new(targetPos + offset)
         if not target.PrimaryPart then
             target.PrimaryPart = primary
         end
+        local offset = target:GetPivot().Position - primary.Position
+        local goal = CFrame.new(targetPos + offset)
         local ok = pcall(function()
             target:PivotTo(goal)
         end)
         if not ok then
-            -- fallback: двигаем каждую часть
             for _, part in ipairs(target:GetDescendants()) do
                 if part:IsA("BasePart") then
                     part.Anchored = false
@@ -182,7 +177,6 @@ local function bringObject(object)
         end
         return true
     else
-        -- Двигаем одну деталь
         if target.Anchored then target.Anchored = false end
         local tween = TweenService:Create(
             target,
@@ -236,9 +230,8 @@ local function getInventoryList()
     return list
 end
 
---// ========== UI-БИБЛИОТЕКА ==========
+--// ========== UI ==========
 local function createUI()
-    -- Удаляем старый
     local old = LocalPlayer.PlayerGui:FindFirstChild("FondiHub")
     if old then old:Destroy() end
 
@@ -248,24 +241,6 @@ local function createUI()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.IgnoreGuiInset = true
     screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-    -- ====== ГРАДИЕНТНЫЙ ФОН ======
-    local gradientBg = Instance.new("Frame")
-    gradientBg.Name = "GradientBg"
-    gradientBg.Size = UDim2.new(1, 0, 1, 0)
-    gradientBg.BackgroundColor3 = Color3.fromRGB(20, 10, 30)
-    gradientBg.BorderSizePixel = 0
-    gradientBg.Parent = screenGui
-    gradientBg.ZIndex = 0
-
-    local bgGradient = Instance.new("UIGradient")
-    bgGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(15, 10, 25)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(30, 15, 45)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 8, 20))
-    })
-    bgGradient.Rotation = 45
-    bgGradient.Parent = gradientBg
 
     -- ====== ГЛАВНОЕ ОКНО ======
     local mainFrame = Instance.new("Frame")
@@ -285,7 +260,7 @@ local function createUI()
     mainCorner.CornerRadius = UDim.new(0, 14)
     mainCorner.Parent = mainFrame
 
-    -- Градиент внутри окна
+    -- Градиент ТОЛЬКО внутри окна
     local mainGradient = Instance.new("UIGradient")
     mainGradient.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(28, 20, 40)),
@@ -294,14 +269,13 @@ local function createUI()
     mainGradient.Rotation = 90
     mainGradient.Parent = mainFrame
 
-    -- Светящаяся рамка (пульсация)
+    -- Светящаяся рамка
     local glow = Instance.new("UIStroke")
     glow.Color = Color3.fromRGB(180, 80, 255)
     glow.Thickness = 1.5
     glow.Transparency = 0.2
     glow.Parent = mainFrame
 
-    -- Пульсация свечения
     task.spawn(function()
         while mainFrame.Parent do
             TweenService:Create(glow, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
@@ -317,7 +291,7 @@ local function createUI()
         end
     end)
 
-    -- ====== ПЛАВНОЕ ПОЯВЛЕНИЕ С МАСШТАБИРОВАНИЕМ ======
+    -- Плавное появление
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
     mainFrame.BackgroundTransparency = 1
     TweenService:Create(mainFrame,
@@ -348,7 +322,6 @@ local function createUI()
     titleCover.BorderSizePixel = 0
     titleCover.Parent = titleBar
 
-    -- Логотип
     local logo = Instance.new("TextLabel")
     logo.Size = UDim2.new(0, 30, 0, 30)
     logo.Position = UDim2.new(0, 12, 0, 7)
@@ -385,7 +358,6 @@ local function createUI()
     subtitle.TextXAlignment = Enum.TextXAlignment.Left
     subtitle.Parent = titleBar
 
-    -- Кнопка закрытия
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 28, 0, 28)
     closeBtn.Position = UDim2.new(1, -40, 0, 8)
@@ -570,7 +542,6 @@ local function createUI()
         ns.Transparency = 0.4
         ns.Parent = notif
 
-        -- Анимация появления
         notif.Position = UDim2.new(1, 0, 0, 0)
         notif.BackgroundTransparency = 1
         TweenService:Create(notif, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -635,7 +606,6 @@ local function createUI()
         return btn
     end
 
-    -- Анимированный тоггл (с кружком)
     local function makeToggle(parent, text, default, callback)
         local container = Instance.new("Frame")
         container.Size = UDim2.new(1, 0, 0, 36)
@@ -761,7 +731,6 @@ local function createUI()
         end
     end)
 
-    -- Кнопки по типам
     local quickTypes = {"Log", "Coal", "Scrap", "Fuel", "Chest", "Diamond", "Ammo"}
     for _, t in ipairs(quickTypes) do
         makeButton(bringPage, "Притянуть: " .. t, Color3.fromRGB(45, 30, 65), function()
@@ -799,7 +768,6 @@ local function createUI()
     searchResults.TextXAlignment = Enum.TextXAlignment.Left
     searchResults.Parent = searchPage
 
-    -- Контейнер карточек
     local resultsFrame = Instance.new("ScrollingFrame")
     resultsFrame.Size = UDim2.new(1, 0, 0, 220)
     resultsFrame.BackgroundColor3 = Color3.fromRGB(25, 18, 38)
@@ -897,12 +865,10 @@ local function createUI()
         local query = searchBox.Text
         if not query or query == "" then return end
 
-        -- Чистим старые карточки
         for _, c in ipairs(resultsFrame:GetChildren()) do
             if c:IsA("Frame") then c:Destroy() end
         end
 
-        -- Убираем старую подсветку
         for _, o in ipairs(Workspace:GetDescendants()) do
             if o.Name == "FondiSearchHL" then o:Destroy() end
         end
@@ -910,7 +876,6 @@ local function createUI()
         local found = 0
         for _, obj in ipairs(Workspace:GetDescendants()) do
             if obj:IsA("BasePart") and string.find(obj.Name:lower(), query:lower(), 1, true) then
-                -- Подсветка
                 local hl = Instance.new("Highlight")
                 hl.Name = "FondiSearchHL"
                 hl.Adornee = obj
@@ -920,11 +885,10 @@ local function createUI()
                 hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                 hl.Parent = obj
 
-                -- Карточка
                 makeItemCard(resultsFrame, obj)
                 found = found + 1
 
-                if found >= 50 then break end -- чтобы не спамить
+                if found >= 50 then break end
             end
         end
 
@@ -1003,7 +967,6 @@ local function createUI()
     -- ====== ВКЛАДКА SETTINGS ======
     local settingsPage = createTab("settings", "Settings", "⚙")
 
-    -- Цвет ESP
     local colorLabel = Instance.new("TextLabel")
     colorLabel.Size = UDim2.new(1, 0, 0, 20)
     colorLabel.BackgroundTransparency = 1
@@ -1024,7 +987,6 @@ local function createUI()
     for _, preset in ipairs(colorPresets) do
         makeButton(settingsPage, "  ●  " .. preset.name, preset.color, function()
             Config.ESPColor = preset.color
-            -- Обновляем существующие ESP
             for obj, data in pairs(ESPObjects) do
                 if data[1] then data[1].FillColor = preset.color end
             end
@@ -1032,7 +994,6 @@ local function createUI()
         end)
     end
 
-    -- Радиус Bring
     local rangeLabel = Instance.new("TextLabel")
     rangeLabel.Size = UDim2.new(1, 0, 0, 20)
     rangeLabel.BackgroundTransparency = 1
@@ -1080,7 +1041,6 @@ local function createUI()
         rangeLabel.Text = "Радиус Bring: " .. Config.BringRange
     end)
 
-    -- Кнопка сброса
     makeButton(settingsPage, "Сбросить настройки", Color3.fromRGB(140, 40, 60), function()
         Config.ESPColor = Color3.fromRGB(0, 255, 140)
         Config.BringRange = 250
@@ -1123,10 +1083,8 @@ local function createUI()
         screenGui:Destroy()
     end)
 
-    -- Стартовая вкладка
     switchTab("esp")
 
-    -- Приветственное уведомление
     task.delay(0.6, function()
         notify("FONDI HUB загружен", Color3.fromRGB(80, 40, 140))
     end)
