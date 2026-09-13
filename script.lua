@@ -1,7 +1,8 @@
 --[[
     FONDI HUB — 99 Nights in the Forest
-    Bring работает ТОЛЬКО по белому списку (то, что выбрано галочками).
-    Костёр, верстак, деревья и прочий декор не тянутся.
+    - Bring с выбором количества (штук)
+    - Чекбоксы для типов предметов
+    - Исправлено перекрытие вкладок
 --]]
 
 --// ========== СЕРВИСЫ ==========
@@ -18,30 +19,30 @@ local Config = {
     ESPTransparency = 0.35,
     ShowNames       = true,
     BringRange      = 250,
-    -- Белый список: только эти предметы можно тянуть
+    BringAmount     = 5, -- сколько штук тянуть
     Whitelist = {
-        ["Log"]      = true,  -- бревно
-        ["Coal"]     = true,  -- уголь
-        ["Scrap"]    = true,  -- металлолом
-        ["Fuel"]     = true,  -- топливо
-        ["Chest"]    = true,  -- сундук
-        ["Diamond"]  = true,  -- алмаз
-        ["Ammo"]     = true,  -- патроны
-        ["Seed"]     = true,  -- семена
-        ["Sapling"]  = true,  -- саженец
-        ["Bolt"]     = true,  -- болты
-        ["Gears"]    = true,  -- шестерёнки
-        ["Tire"]     = true,  -- шина
-        ["Revolver"] = true,  -- револьвер
-        ["Rifle"]    = true,  -- винтовка
-        ["Corpse"]   = true,  -- труп
-        ["Pelt"]     = true,  -- шкура
-        ["Foot"]     = true,  -- лапа
-        ["Rope"]     = true,  -- верёвка
-        ["Cloth"]    = true,  -- ткань
-        ["Bandage"]  = true,  -- бинт
-        ["Meat"]     = true,  -- мясо
-        ["Berry"]    = true,  -- ягоды
+        ["Log"]      = true,
+        ["Coal"]     = true,
+        ["Scrap"]    = true,
+        ["Fuel"]     = true,
+        ["Chest"]    = true,
+        ["Diamond"]  = true,
+        ["Ammo"]     = true,
+        ["Seed"]     = true,
+        ["Sapling"]  = true,
+        ["Bolt"]     = true,
+        ["Gears"]    = true,
+        ["Tire"]     = true,
+        ["Revolver"] = true,
+        ["Rifle"]    = true,
+        ["Corpse"]   = true,
+        ["Pelt"]     = true,
+        ["Foot"]     = true,
+        ["Rope"]     = true,
+        ["Cloth"]    = true,
+        ["Bandage"]  = true,
+        ["Meat"]     = true,
+        ["Berry"]    = true,
     }
 }
 
@@ -64,9 +65,7 @@ local function isAnimal(object)
     return false
 end
 
---// ========== ТОЧНОЕ СОВПАДЕНИЕ С БЕЛЫМ СПИСКОМ ==========
--- Тянем ТОЛЬКО если имя точно совпадает или начинается с имени из Whitelist.
--- НЕ используем string.find — иначе "Log" в "LogPile" (костёр) пройдёт.
+--// ========== БЕЛЫЙ СПИСОК ==========
 local function isWhitelisted(object)
     if not object or not object.Parent then return false end
     if not object:IsA("BasePart") then return false end
@@ -75,22 +74,23 @@ local function isWhitelisted(object)
     local nm = object.Name
     local nmLower = nm:lower()
 
-    -- Точное совпадение (без учёта регистра)
-    for wName, _ in pairs(Config.Whitelist) do
-        local wLower = wName:lower()
-        if nmLower == wLower then return true end
-        -- Разрешаем суффиксы типа "Log1", "Log_2" — но не "LogPile"
-        if nmLower:sub(1, #wLower) == wLower then
-            local nextChar = nmLower:sub(#wLower + 1, #wLower + 1)
-            if nextChar == "" or nextChar:match("%d") or nextChar == "_" or nextChar == "-" or nextChar == " " then
-                return true
+    for wName, enabled in pairs(Config.Whitelist) do
+        if enabled then
+            local wLower = wName:lower()
+            if nmLower == wLower then return true end
+            -- Log1, Log_2, Log-3, Log 4
+            if nmLower:sub(1, #wLower) == wLower then
+                local nextChar = nmLower:sub(#wLower + 1, #wLower + 1)
+                if nextChar == "" or nextChar:match("%d") or nextChar == "_" or nextChar == "-" or nextChar == " " then
+                    return true
+                end
             end
         end
     end
     return false
 end
 
---// ========== ДЕКОР: модель без Humanoid, но с кучей частей ==========
+--// ========== ДЕКОР ==========
 local function isDecorModel(object)
     local parent = object.Parent
     if not parent then return false end
@@ -99,14 +99,13 @@ local function isDecorModel(object)
         for _, child in ipairs(parent:GetChildren()) do
             if child:IsA("BasePart") then
                 partCount = partCount + 1
-                if partCount > 2 then return true end -- 3+ частей = декор
+                if partCount > 2 then return true end
             end
         end
     end
     return false
 end
 
---// ========== ИТОГОВАЯ ПРОВЕРКА ==========
 local function isTargetItem(object)
     if not object or not object.Parent then return false end
     if not object:IsA("BasePart") then return false end
@@ -132,7 +131,6 @@ local function getBringTarget(object)
     if not object then return nil end
     local parent = object.Parent
     if parent and parent:IsA("Model") and parent.PrimaryPart then
-        -- Проверяем, что в модели не больше 2 частей
         local partCount = 0
         for _, child in ipairs(parent:GetChildren()) do
             if child:IsA("BasePart") then
@@ -250,22 +248,48 @@ local function bringObject(object)
     end
 end
 
+--// Bring всех выбранных, но не больше Config.BringAmount на тип
 local function bringAllItems()
     local count = 0
+    local perTypeCount = {}
     for _, object in ipairs(Workspace:GetDescendants()) do
         if isTargetItem(object) and getDistance(object) <= Config.BringRange then
-            if bringObject(object) then count = count + 1 end
+            -- Определяем базовое имя типа
+            local baseName = nil
+            local nmLower = object.Name:lower()
+            for wName, enabled in pairs(Config.Whitelist) do
+                if enabled then
+                    local wLower = wName:lower()
+                    if nmLower == wLower or nmLower:sub(1, #wLower) == wLower then
+                        baseName = wName
+                        break
+                    end
+                end
+            end
+            if baseName then
+                perTypeCount[baseName] = perTypeCount[baseName] or 0
+                if perTypeCount[baseName] < Config.BringAmount then
+                    if bringObject(object) then
+                        count = count + 1
+                        perTypeCount[baseName] = perTypeCount[baseName] + 1
+                    end
+                end
+            end
         end
     end
     return count
 end
 
-local function bringSpecificItem(itemName)
+-- Bring конкретного типа с лимитом
+local function bringSpecificItem(itemName, amount)
+    amount = amount or Config.BringAmount
     local count = 0
     local lowerQuery = itemName:lower()
     for _, object in ipairs(Workspace:GetDescendants()) do
+        if count >= amount then break end
         if isTargetItem(object)
-            and object.Name:lower() == lowerQuery
+            and (object.Name:lower() == lowerQuery
+                 or object.Name:lower():sub(1, #lowerQuery) == lowerQuery)
             and getDistance(object) <= Config.BringRange then
             if bringObject(object) then count = count + 1 end
         end
@@ -310,7 +334,7 @@ local function createUI()
     mainFrame.Name = "MainFrame"
     mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
     mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    mainFrame.Size = UDim2.new(0, 620, 0, 420)
+    mainFrame.Size = UDim2.new(0, 640, 0, 440)
     mainFrame.BackgroundColor3 = Color3.fromRGB(24, 18, 34)
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
@@ -354,7 +378,7 @@ local function createUI()
     mainFrame.BackgroundTransparency = 1
     TweenService:Create(mainFrame,
         TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        {Size = UDim2.new(0, 620, 0, 420)}
+        {Size = UDim2.new(0, 640, 0, 440)}
     ):Play()
     TweenService:Create(mainFrame,
         TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -465,6 +489,7 @@ local function createUI()
     contentFrame.Size = UDim2.new(1, -180, 1, -70)
     contentFrame.Position = UDim2.new(0, 170, 0, 56)
     contentFrame.BackgroundTransparency = 1
+    contentFrame.ClipsDescendants = true -- важно: режет всё, что за пределами
     contentFrame.Parent = mainFrame
 
     local tabs, pages = {}, {}
@@ -482,12 +507,14 @@ local function createUI()
 
         for pageName, pageFrame in pairs(pages) do
             local isActive = (pageName == name)
+            -- Жёстко скрываем всё, кроме активной
+            pageFrame.Visible = isActive
+            pageFrame.ZIndex = isActive and 10 or 1
             if isActive then
-                pageFrame.Visible = true
                 pageFrame.GroupTransparency = 1
                 TweenService:Create(pageFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {GroupTransparency = 0}):Play()
             else
-                pageFrame.Visible = false
+                pageFrame.GroupTransparency = 1
             end
         end
     end
@@ -528,6 +555,8 @@ local function createUI()
         page.ScrollBarThickness = 5
         page.ScrollBarImageColor3 = Color3.fromRGB(120, 50, 200)
         page.Visible = false
+        page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        page.CanvasSize = UDim2.new(0, 0, 0, 0)
         page.Parent = contentFrame
 
         local layout = Instance.new("UIListLayout")
@@ -537,7 +566,7 @@ local function createUI()
 
         local padding = Instance.new("UIPadding")
         padding.PaddingTop = UDim.new(0, 4)
-        padding.PaddingBottom = UDim.new(0, 4)
+        padding.PaddingBottom = UDim.new(0, 20)
         padding.PaddingRight = UDim.new(0, 4)
         padding.Parent = page
 
@@ -734,36 +763,60 @@ local function createUI()
     -- ====== ВКЛАДКА BRING ======
     local bringPage = createTab("bring", "Bring", "🧲")
 
+    -- Поле "Сколько штук"
+    local amountLabel = Instance.new("TextLabel")
+    amountLabel.Size = UDim2.new(1, 0, 0, 20)
+    amountLabel.BackgroundTransparency = 1
+    amountLabel.Text = "Сколько штук тянуть: " .. Config.BringAmount
+    amountLabel.TextColor3 = Color3.fromRGB(200, 180, 230)
+    amountLabel.Font = Enum.Font.GothamMedium
+    amountLabel.TextSize = 12
+    amountLabel.TextXAlignment = Enum.TextXAlignment.Left
+    amountLabel.Parent = bringPage
+
+    local amountRow = Instance.new("Frame")
+    amountRow.Size = UDim2.new(1, 0, 0, 30)
+    amountRow.BackgroundColor3 = Color3.fromRGB(35, 25, 50)
+    amountRow.Parent = bringPage
+
+    local arCorner = Instance.new("UICorner")
+    arCorner.CornerRadius = UDim.new(0, 8)
+    arCorner.Parent = amountRow
+
+    local minusAmount = Instance.new("TextButton")
+    minusAmount.Size = UDim2.new(0, 30, 1, 0)
+    minusAmount.BackgroundColor3 = Color3.fromRGB(60, 40, 90)
+    minusAmount.Text = "−"
+    minusAmount.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minusAmount.Font = Enum.Font.GothamBold
+    minusAmount.TextSize = 16
+    minusAmount.Parent = amountRow
+
+    local plusAmount = Instance.new("TextButton")
+    plusAmount.Size = UDim2.new(0, 30, 1, 0)
+    plusAmount.Position = UDim2.new(1, -30, 0, 0)
+    plusAmount.BackgroundColor3 = Color3.fromRGB(60, 40, 90)
+    plusAmount.Text = "+"
+    plusAmount.TextColor3 = Color3.fromRGB(255, 255, 255)
+    plusAmount.Font = Enum.Font.GothamBold
+    plusAmount.TextSize = 16
+    plusAmount.Parent = amountRow
+
+    minusAmount.MouseButton1Click:Connect(function()
+        Config.BringAmount = math.max(1, Config.BringAmount - 1)
+        amountLabel.Text = "Сколько штук тянуть: " .. Config.BringAmount
+    end)
+    plusAmount.MouseButton1Click:Connect(function()
+        Config.BringAmount = math.min(100, Config.BringAmount + 1)
+        amountLabel.Text = "Сколько штук тянуть: " .. Config.BringAmount
+    end)
+
     makeButton(bringPage, "ПРИТЯНУТЬ ВСЕ ВЫБРАННЫЕ", Color3.fromRGB(80, 40, 140), function()
         local n = bringAllItems()
         notify("Bring: " .. n .. " предметов", Color3.fromRGB(60, 35, 90))
     end)
 
-    local inputBox = Instance.new("TextBox")
-    inputBox.Size = UDim2.new(1, 0, 0, 34)
-    inputBox.BackgroundColor3 = Color3.fromRGB(35, 25, 50)
-    inputBox.PlaceholderText = "Точное имя предмета (Log, Coal, Chest...)"
-    inputBox.Text = ""
-    inputBox.TextColor3 = Color3.fromRGB(240, 230, 255)
-    inputBox.PlaceholderTextColor3 = Color3.fromRGB(140, 120, 170)
-    inputBox.Font = Enum.Font.Gotham
-    inputBox.TextSize = 13
-    inputBox.ClearTextOnFocus = false
-    inputBox.Parent = bringPage
-
-    local inputCorner = Instance.new("UICorner")
-    inputCorner.CornerRadius = UDim.new(0, 8)
-    inputCorner.Parent = inputBox
-
-    makeButton(bringPage, "Притянуть введённое", Color3.fromRGB(80, 40, 140), function()
-        local text = inputBox.Text
-        if text and text ~= "" then
-            local n = bringSpecificItem(text)
-            notify("Bring [" .. text .. "]: " .. n, Color3.fromRGB(60, 35, 90))
-        end
-    end)
-
-    -- Заголовок "Что притягивать?"
+    -- Чекбоксы
     local wlTitle = Instance.new("TextLabel")
     wlTitle.Size = UDim2.new(1, 0, 0, 22)
     wlTitle.BackgroundTransparency = 1
@@ -774,7 +827,6 @@ local function createUI()
     wlTitle.TextXAlignment = Enum.TextXAlignment.Left
     wlTitle.Parent = bringPage
 
-    -- Чекбоксы для каждого типа
     local wlKeys = {}
     for k, _ in pairs(Config.Whitelist) do table.insert(wlKeys, k) end
     table.sort(wlKeys)
@@ -857,27 +909,30 @@ local function createUI()
     searchResults.TextXAlignment = Enum.TextXAlignment.Left
     searchResults.Parent = searchPage
 
-    local resultsFrame = Instance.new("ScrollingFrame")
-    resultsFrame.Size = UDim2.new(1, 0, 0, 220)
+    local resultsFrame = Instance.new("Frame")
+    resultsFrame.Size = UDim2.new(1, 0, 0, 240)
     resultsFrame.BackgroundColor3 = Color3.fromRGB(25, 18, 38)
     resultsFrame.BorderSizePixel = 0
-    resultsFrame.ScrollBarThickness = 4
-    resultsFrame.ScrollBarImageColor3 = Color3.fromRGB(120, 50, 200)
     resultsFrame.Parent = searchPage
 
     local rfCorner = Instance.new("UICorner")
     rfCorner.CornerRadius = UDim.new(0, 8)
     rfCorner.Parent = resultsFrame
 
+    local rfScroll = Instance.new("ScrollingFrame")
+    rfScroll.Size = UDim2.new(1, -10, 1, -10)
+    rfScroll.Position = UDim2.new(0, 5, 0, 5)
+    rfScroll.BackgroundTransparency = 1
+    rfScroll.BorderSizePixel = 0
+    rfScroll.ScrollBarThickness = 4
+    rfScroll.ScrollBarImageColor3 = Color3.fromRGB(120, 50, 200)
+    rfScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    rfScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    rfScroll.Parent = resultsFrame
+
     local rfLayout = Instance.new("UIListLayout")
     rfLayout.Padding = UDim.new(0, 6)
-    rfLayout.Parent = resultsFrame
-
-    local rfPad = Instance.new("UIPadding")
-    rfPad.PaddingTop = UDim.new(0, 6)
-    rfPad.PaddingLeft = UDim.new(0, 6)
-    rfPad.PaddingRight = UDim.new(0, 6)
-    rfPad.Parent = resultsFrame
+    rfLayout.Parent = rfScroll
 
     local function makeItemCard(parent, obj)
         local card = Instance.new("Frame")
@@ -935,18 +990,18 @@ local function createUI()
             if bringObject(obj) then
                 notify("Bring: " .. obj.Name .. " ✓", Color3.fromRGB(50, 90, 60))
             else
-                notify("Не могу притянуть (не из белого списка)", Color3.fromRGB(140, 60, 60))
+                notify("Не из белого списка", Color3.fromRGB(140, 60, 60))
             end
         end)
 
         return card
     end
 
-    makeButton(searchPage, "Найти (все объекты, кроме животных)", Color3.fromRGB(80, 40, 140), function()
+    makeButton(searchPage, "Найти (все, кроме животных)", Color3.fromRGB(80, 40, 140), function()
         local query = searchBox.Text
         if not query or query == "" then return end
 
-        for _, c in ipairs(resultsFrame:GetChildren()) do
+        for _, c in ipairs(rfScroll:GetChildren()) do
             if c:IsA("Frame") then c:Destroy() end
         end
 
@@ -969,21 +1024,21 @@ local function createUI()
                 hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                 hl.Parent = obj
 
-                makeItemCard(resultsFrame, obj)
+                makeItemCard(rfScroll, obj)
                 found = found + 1
                 if found >= 50 then break end
             end
         end
 
         searchResults.Text = "Найдено: " .. found
-        notify("Поиск: " .. found .. " объектов", Color3.fromRGB(60, 35, 90))
+        notify("Поиск: " .. found, Color3.fromRGB(60, 35, 90))
     end)
 
     makeButton(searchPage, "Убрать подсветку", Color3.fromRGB(140, 40, 60), function()
         for _, o in ipairs(Workspace:GetDescendants()) do
             if o.Name == "FondiSearchHL" then o:Destroy() end
         end
-        for _, c in ipairs(resultsFrame:GetChildren()) do
+        for _, c in ipairs(rfScroll:GetChildren()) do
             if c:IsA("Frame") then c:Destroy() end
         end
         searchResults.Text = "Найдено: 0"
@@ -1009,6 +1064,8 @@ local function createUI()
     invScroll.BorderSizePixel = 0
     invScroll.ScrollBarThickness = 4
     invScroll.ScrollBarImageColor3 = Color3.fromRGB(120, 50, 200)
+    invScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    invScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     invScroll.Parent = invList
 
     local invLayout = Instance.new("UIListLayout")
@@ -1127,7 +1184,8 @@ local function createUI()
     makeButton(settingsPage, "Сбросить настройки", Color3.fromRGB(140, 40, 60), function()
         Config.ESPColor = Color3.fromRGB(0, 255, 140)
         Config.BringRange = 250
-        Config.ESPTransparency = 0.35
+        Config.BringAmount = 5
+        amountLabel.Text = "Сколько штук тянуть: " .. Config.BringAmount
         rangeLabel.Text = "Радиус Bring: " .. Config.BringRange
         notify("Настройки сброшены")
     end)
@@ -1143,7 +1201,7 @@ local function createUI()
                 mainFrame.Size = UDim2.new(0, 0, 0, 0)
                 TweenService:Create(mainFrame,
                     TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-                    {Size = UDim2.new(0, 620, 0, 420)}
+                    {Size = UDim2.new(0, 640, 0, 440)}
                 ):Play()
             else
                 TweenService:Create(mainFrame,
