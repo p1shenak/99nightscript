@@ -1,18 +1,7 @@
 --[[
     FONDI HUB — 99 Nights in the Forest
-    Полностью открытый код. Без обфускации.
-    
-    Возможности:
-    - Плавное появление с масштабированием
-    - Градиент внутри окна
-    - Светящаяся рамка (пульсация)
-    - Боковые вкладки
-    - Hover-анимации, тогглы
-    - Поиск с карточками
-    - Всплывающие уведомления
-    - Bring через Model / BasePart (с жёстким фильтром)
-    - Settings: цвет ESP, радиус, сброс
-    - Горячая клавиша RightShift
+    Bring работает ТОЛЬКО по белому списку (то, что выбрано галочками).
+    Костёр, верстак, деревья и прочий декор не тянутся.
 --]]
 
 --// ========== СЕРВИСЫ ==========
@@ -29,26 +18,36 @@ local Config = {
     ESPTransparency = 0.35,
     ShowNames       = true,
     BringRange      = 250,
-    TargetItems = {
-        "Log", "Coal", "Scrap", "Fuel", "Chest", "Diamond", "Ammo",
-        "Seed", "Sapling", "Bolt", "Gears", "Tire", "Revolver", "Rifle",
-        "Corpse", "Pelt", "Foot", "Rope", "Cloth", "Bandage", "Meat", "Berry"
+    -- Белый список: только эти предметы можно тянуть
+    Whitelist = {
+        ["Log"]      = true,  -- бревно
+        ["Coal"]     = true,  -- уголь
+        ["Scrap"]    = true,  -- металлолом
+        ["Fuel"]     = true,  -- топливо
+        ["Chest"]    = true,  -- сундук
+        ["Diamond"]  = true,  -- алмаз
+        ["Ammo"]     = true,  -- патроны
+        ["Seed"]     = true,  -- семена
+        ["Sapling"]  = true,  -- саженец
+        ["Bolt"]     = true,  -- болты
+        ["Gears"]    = true,  -- шестерёнки
+        ["Tire"]     = true,  -- шина
+        ["Revolver"] = true,  -- револьвер
+        ["Rifle"]    = true,  -- винтовка
+        ["Corpse"]   = true,  -- труп
+        ["Pelt"]     = true,  -- шкура
+        ["Foot"]     = true,  -- лапа
+        ["Rope"]     = true,  -- верёвка
+        ["Cloth"]    = true,  -- ткань
+        ["Bandage"]  = true,  -- бинт
+        ["Meat"]     = true,  -- мясо
+        ["Berry"]    = true,  -- ягоды
     }
-}
-
---// ========== ЧЁРНЫЙ СПИСОК (что НЕ тянуть) ==========
-local Blacklist = {
-    "Campfire", "Fire", "Tree", "Stump", "Rock", "Boulder", "Bush",
-    "Grass", "House", "Wall", "Floor", "Door", "Window", "Bridge",
-    "Tent", "Bed", "Workbench", "Craft", "Station", "Base", "Plot",
-    "Ground", "Terrain", "Water", "Sign", "Lamp", "Light", "Torch",
-    "Snow", "Ice", "Mountain", "Cliff", "Fence", "Gate", "Trap",
-    "Spawn", "SpawnLocation", "Spawner", "Debris", "Effect", "Particle"
 }
 
 local ESPObjects = {}
 
---// ========== УТИЛИТЫ ==========
+--// ========== ЖИВОТНЫЕ ==========
 local function isAnimal(object)
     if not object then return false end
     local check = object
@@ -57,7 +56,7 @@ local function isAnimal(object)
         if check:IsA("Model") and check:FindFirstChildOfClass("Humanoid") then
             return true
         end
-        if check:FindFirstChildOfClass and check:FindFirstChildOfClass("Humanoid") then
+        if check.FindFirstChildOfClass and check:FindFirstChildOfClass("Humanoid") then
             return true
         end
         check = check.Parent
@@ -65,43 +64,55 @@ local function isAnimal(object)
     return false
 end
 
-local function isInBlacklist(object)
-    if not object then return false end
-    local nm = object.Name:lower()
-    local pn = object.Parent and object.Parent.Name:lower() or ""
-    for _, banned in ipairs(Blacklist) do
-        local b = banned:lower()
-        if string.find(nm, b, 1, true) then return true end
-        if string.find(pn, b, 1, true) then return true end
+--// ========== ТОЧНОЕ СОВПАДЕНИЕ С БЕЛЫМ СПИСКОМ ==========
+-- Тянем ТОЛЬКО если имя точно совпадает или начинается с имени из Whitelist.
+-- НЕ используем string.find — иначе "Log" в "LogPile" (костёр) пройдёт.
+local function isWhitelisted(object)
+    if not object or not object.Parent then return false end
+    if not object:IsA("BasePart") then return false end
+    if isAnimal(object) then return false end
+
+    local nm = object.Name
+    local nmLower = nm:lower()
+
+    -- Точное совпадение (без учёта регистра)
+    for wName, _ in pairs(Config.Whitelist) do
+        local wLower = wName:lower()
+        if nmLower == wLower then return true end
+        -- Разрешаем суффиксы типа "Log1", "Log_2" — но не "LogPile"
+        if nmLower:sub(1, #wLower) == wLower then
+            local nextChar = nmLower:sub(#wLower + 1, #wLower + 1)
+            if nextChar == "" or nextChar:match("%d") or nextChar == "_" or nextChar == "-" or nextChar == " " then
+                return true
+            end
+        end
     end
     return false
 end
 
-local function isTargetItem(object)
-    if not object or not object.Parent then return false end
-    if not object:IsA("BasePart") then return false end
-    if isAnimal(object) then return false end
-    if isInBlacklist(object) then return false end
-
-    -- Если родитель — Model без Humanoid, но с кучей частей (декор) — мимо
+--// ========== ДЕКОР: модель без Humanoid, но с кучей частей ==========
+local function isDecorModel(object)
     local parent = object.Parent
-    if parent and parent:IsA("Model") and not parent:FindFirstChildOfClass("Humanoid") then
+    if not parent then return false end
+    if parent:IsA("Model") and not parent:FindFirstChildOfClass("Humanoid") then
         local partCount = 0
         for _, child in ipairs(parent:GetChildren()) do
             if child:IsA("BasePart") then
                 partCount = partCount + 1
-                if partCount > 3 then return false end
+                if partCount > 2 then return true end -- 3+ частей = декор
             end
         end
     end
-
-    local lower = object.Name:lower()
-    for _, name in ipairs(Config.TargetItems) do
-        local n = name:lower()
-        if lower == n then return true end
-        if string.find(lower, n, 1, true) then return true end
-    end
     return false
+end
+
+--// ========== ИТОГОВАЯ ПРОВЕРКА ==========
+local function isTargetItem(object)
+    if not object or not object.Parent then return false end
+    if not object:IsA("BasePart") then return false end
+    if isAnimal(object) then return false end
+    if isDecorModel(object) then return false end
+    return isWhitelisted(object)
 end
 
 local function getHRP()
@@ -121,15 +132,12 @@ local function getBringTarget(object)
     if not object then return nil end
     local parent = object.Parent
     if parent and parent:IsA("Model") and parent.PrimaryPart then
-        return parent, true
-    end
-    if parent and parent:IsA("Model") then
-        -- Проверяем, что это не декор
+        -- Проверяем, что в модели не больше 2 частей
         local partCount = 0
         for _, child in ipairs(parent:GetChildren()) do
             if child:IsA("BasePart") then
                 partCount = partCount + 1
-                if partCount > 3 then return object, false end
+                if partCount > 2 then return object, false end
             end
         end
         return parent, true
@@ -208,8 +216,7 @@ end)
 local function bringObject(object)
     local hrp = getHRP()
     if not hrp then return false end
-    if isAnimal(object) then return false end
-    if isInBlacklist(object) then return false end
+    if not isTargetItem(object) then return false end
 
     local target, isModel = getBringTarget(object)
     if not target then return false end
@@ -219,14 +226,10 @@ local function bringObject(object)
     if isModel then
         local primary = target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")
         if not primary then return false end
-        if not target.PrimaryPart then
-            target.PrimaryPart = primary
-        end
+        if not target.PrimaryPart then target.PrimaryPart = primary end
         local offset = target:GetPivot().Position - primary.Position
         local goal = CFrame.new(targetPos + offset)
-        local ok = pcall(function()
-            target:PivotTo(goal)
-        end)
+        local ok = pcall(function() target:PivotTo(goal) end)
         if not ok then
             for _, part in ipairs(target:GetDescendants()) do
                 if part:IsA("BasePart") then
@@ -238,12 +241,11 @@ local function bringObject(object)
         return true
     else
         if target.Anchored then target.Anchored = false end
-        local tween = TweenService:Create(
+        TweenService:Create(
             target,
             TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {CFrame = CFrame.new(targetPos)}
-        )
-        tween:Play()
+        ):Play()
         return true
     end
 end
@@ -262,10 +264,8 @@ local function bringSpecificItem(itemName)
     local count = 0
     local lowerQuery = itemName:lower()
     for _, object in ipairs(Workspace:GetDescendants()) do
-        if object:IsA("BasePart")
-            and not isAnimal(object)
-            and not isInBlacklist(object)
-            and string.find(object.Name:lower(), lowerQuery, 1, true)
+        if isTargetItem(object)
+            and object.Name:lower() == lowerQuery
             and getDistance(object) <= Config.BringRange then
             if bringObject(object) then count = count + 1 end
         end
@@ -310,7 +310,7 @@ local function createUI()
     mainFrame.Name = "MainFrame"
     mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
     mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    mainFrame.Size = UDim2.new(0, 620, 0, 400)
+    mainFrame.Size = UDim2.new(0, 620, 0, 420)
     mainFrame.BackgroundColor3 = Color3.fromRGB(24, 18, 34)
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
@@ -340,13 +340,11 @@ local function createUI()
     task.spawn(function()
         while mainFrame.Parent do
             TweenService:Create(glow, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                Transparency = 0.65,
-                Thickness = 2.2
+                Transparency = 0.65, Thickness = 2.2
             }):Play()
             task.wait(1.5)
             TweenService:Create(glow, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                Transparency = 0.15,
-                Thickness = 1.2
+                Transparency = 0.15, Thickness = 1.2
             }):Play()
             task.wait(1.5)
         end
@@ -356,7 +354,7 @@ local function createUI()
     mainFrame.BackgroundTransparency = 1
     TweenService:Create(mainFrame,
         TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        {Size = UDim2.new(0, 620, 0, 400)}
+        {Size = UDim2.new(0, 620, 0, 420)}
     ):Play()
     TweenService:Create(mainFrame,
         TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -365,7 +363,6 @@ local function createUI()
 
     -- ====== ЗАГОЛОВОК ======
     local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
     titleBar.Size = UDim2.new(1, 0, 0, 44)
     titleBar.BackgroundColor3 = Color3.fromRGB(32, 22, 46)
     titleBar.BorderSizePixel = 0
@@ -433,19 +430,14 @@ local function createUI()
     closeCorner.Parent = closeBtn
 
     closeBtn.MouseEnter:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.15), {
-            BackgroundColor3 = Color3.fromRGB(230, 70, 90)
-        }):Play()
+        TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(230, 70, 90)}):Play()
     end)
     closeBtn.MouseLeave:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.15), {
-            BackgroundColor3 = Color3.fromRGB(180, 50, 70)
-        }):Play()
+        TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(180, 50, 70)}):Play()
     end)
 
     -- ====== БОКОВОЕ МЕНЮ ======
     local sideBar = Instance.new("Frame")
-    sideBar.Name = "SideBar"
     sideBar.Size = UDim2.new(0, 150, 1, -60)
     sideBar.Position = UDim2.new(0, 10, 0, 50)
     sideBar.BackgroundColor3 = Color3.fromRGB(20, 14, 30)
@@ -470,7 +462,6 @@ local function createUI()
 
     -- ====== КОНТЕНТ ======
     local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
     contentFrame.Size = UDim2.new(1, -180, 1, -70)
     contentFrame.Position = UDim2.new(0, 170, 0, 56)
     contentFrame.BackgroundTransparency = 1
@@ -481,14 +472,12 @@ local function createUI()
     local function switchTab(name)
         for tabName, tabBtn in pairs(tabs) do
             local isActive = (tabName == name)
-            TweenService:Create(tabBtn,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quad),
-                {BackgroundColor3 = isActive and Color3.fromRGB(120, 50, 200) or Color3.fromRGB(35, 25, 50)}
-            ):Play()
-            TweenService:Create(tabBtn,
-                TweenInfo.new(0.2),
-                {TextColor3 = isActive and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 160, 210)}
-            ):Play()
+            TweenService:Create(tabBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+                BackgroundColor3 = isActive and Color3.fromRGB(120, 50, 200) or Color3.fromRGB(35, 25, 50)
+            }):Play()
+            TweenService:Create(tabBtn, TweenInfo.new(0.2), {
+                TextColor3 = isActive and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 160, 210)
+            }):Play()
         end
 
         for pageName, pageFrame in pairs(pages) do
@@ -496,10 +485,7 @@ local function createUI()
             if isActive then
                 pageFrame.Visible = true
                 pageFrame.GroupTransparency = 1
-                TweenService:Create(pageFrame,
-                    TweenInfo.new(0.25, Enum.EasingStyle.Quad),
-                    {GroupTransparency = 0}
-                ):Play()
+                TweenService:Create(pageFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {GroupTransparency = 0}):Play()
             else
                 pageFrame.Visible = false
             end
@@ -523,16 +509,12 @@ local function createUI()
 
         btn.MouseEnter:Connect(function()
             if not pages[name] or not pages[name].Visible then
-                TweenService:Create(btn, TweenInfo.new(0.15), {
-                    BackgroundColor3 = Color3.fromRGB(50, 35, 75)
-                }):Play()
+                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(50, 35, 75)}):Play()
             end
         end)
         btn.MouseLeave:Connect(function()
             if not pages[name] or not pages[name].Visible then
-                TweenService:Create(btn, TweenInfo.new(0.15), {
-                    BackgroundColor3 = Color3.fromRGB(35, 25, 50)
-                }):Play()
+                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(35, 25, 50)}):Play()
             end
         end)
         btn.MouseButton1Click:Connect(function() switchTab(name) end)
@@ -565,7 +547,6 @@ local function createUI()
 
     -- ====== УВЕДОМЛЕНИЯ ======
     local notifContainer = Instance.new("Frame")
-    notifContainer.Name = "Notifications"
     notifContainer.Size = UDim2.new(0, 260, 0, 200)
     notifContainer.Position = UDim2.new(1, -280, 0, 60)
     notifContainer.BackgroundTransparency = 1
@@ -605,15 +586,13 @@ local function createUI()
         notif.Position = UDim2.new(1, 0, 0, 0)
         notif.BackgroundTransparency = 1
         TweenService:Create(notif, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            Position = UDim2.new(0, 0, 0, 0),
-            BackgroundTransparency = 0
+            Position = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 0
         }):Play()
 
         task.delay(3, function()
             if notif.Parent then
                 TweenService:Create(notif, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-                    Position = UDim2.new(1, 0, 0, 0),
-                    BackgroundTransparency = 1
+                    Position = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1
                 }):Play()
                 task.wait(0.35)
                 notif:Destroy()
@@ -754,15 +733,16 @@ local function createUI()
 
     -- ====== ВКЛАДКА BRING ======
     local bringPage = createTab("bring", "Bring", "🧲")
-    makeButton(bringPage, "ПРИТЯНУТЬ ВСЁ", Color3.fromRGB(80, 40, 140), function()
+
+    makeButton(bringPage, "ПРИТЯНУТЬ ВСЕ ВЫБРАННЫЕ", Color3.fromRGB(80, 40, 140), function()
         local n = bringAllItems()
-        notify("Bring: найдено " .. n, Color3.fromRGB(60, 35, 90))
+        notify("Bring: " .. n .. " предметов", Color3.fromRGB(60, 35, 90))
     end)
 
     local inputBox = Instance.new("TextBox")
     inputBox.Size = UDim2.new(1, 0, 0, 34)
     inputBox.BackgroundColor3 = Color3.fromRGB(35, 25, 50)
-    inputBox.PlaceholderText = "Имя предмета (Log, Coal, Chest...)"
+    inputBox.PlaceholderText = "Точное имя предмета (Log, Coal, Chest...)"
     inputBox.Text = ""
     inputBox.TextColor3 = Color3.fromRGB(240, 230, 255)
     inputBox.PlaceholderTextColor3 = Color3.fromRGB(140, 120, 170)
@@ -775,12 +755,6 @@ local function createUI()
     inputCorner.CornerRadius = UDim.new(0, 8)
     inputCorner.Parent = inputBox
 
-    local inputStroke = Instance.new("UIStroke")
-    inputStroke.Color = Color3.fromRGB(120, 50, 200)
-    inputStroke.Thickness = 1
-    inputStroke.Transparency = 0.6
-    inputStroke.Parent = inputBox
-
     makeButton(bringPage, "Притянуть введённое", Color3.fromRGB(80, 40, 140), function()
         local text = inputBox.Text
         if text and text ~= "" then
@@ -789,11 +763,68 @@ local function createUI()
         end
     end)
 
-    local quickTypes = {"Log", "Coal", "Scrap", "Fuel", "Chest", "Diamond", "Ammo"}
-    for _, t in ipairs(quickTypes) do
-        makeButton(bringPage, "Притянуть: " .. t, Color3.fromRGB(45, 30, 65), function()
-            local n = bringSpecificItem(t)
-            notify("Bring [" .. t .. "]: " .. n, Color3.fromRGB(60, 35, 90))
+    -- Заголовок "Что притягивать?"
+    local wlTitle = Instance.new("TextLabel")
+    wlTitle.Size = UDim2.new(1, 0, 0, 22)
+    wlTitle.BackgroundTransparency = 1
+    wlTitle.Text = "Что притягивать (галочки):"
+    wlTitle.TextColor3 = Color3.fromRGB(200, 180, 230)
+    wlTitle.Font = Enum.Font.GothamMedium
+    wlTitle.TextSize = 12
+    wlTitle.TextXAlignment = Enum.TextXAlignment.Left
+    wlTitle.Parent = bringPage
+
+    -- Чекбоксы для каждого типа
+    local wlKeys = {}
+    for k, _ in pairs(Config.Whitelist) do table.insert(wlKeys, k) end
+    table.sort(wlKeys)
+
+    for _, itemName in ipairs(wlKeys) do
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, 0, 0, 28)
+        row.BackgroundColor3 = Color3.fromRGB(35, 25, 50)
+        row.Text = ""
+        row.Parent = bringPage
+
+        local rowCorner = Instance.new("UICorner")
+        rowCorner.CornerRadius = UDim.new(0, 6)
+        rowCorner.Parent = row
+
+        local box = Instance.new("Frame")
+        box.Size = UDim2.new(0, 18, 0, 18)
+        box.Position = UDim2.new(0, 8, 0.5, -9)
+        box.BackgroundColor3 = Config.Whitelist[itemName] and Color3.fromRGB(0, 200, 120) or Color3.fromRGB(50, 40, 65)
+        box.Parent = row
+
+        local boxCorner = Instance.new("UICorner")
+        boxCorner.CornerRadius = UDim.new(0, 4)
+        boxCorner.Parent = box
+
+        local check = Instance.new("TextLabel")
+        check.Size = UDim2.new(1, 0, 1, 0)
+        check.BackgroundTransparency = 1
+        check.Text = Config.Whitelist[itemName] and "✓" or ""
+        check.TextColor3 = Color3.fromRGB(255, 255, 255)
+        check.Font = Enum.Font.GothamBold
+        check.TextSize = 14
+        check.Parent = box
+
+        local nameLbl = Instance.new("TextLabel")
+        nameLbl.Size = UDim2.new(1, -40, 1, 0)
+        nameLbl.Position = UDim2.new(0, 34, 0, 0)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Text = itemName
+        nameLbl.TextColor3 = Color3.fromRGB(220, 210, 240)
+        nameLbl.Font = Enum.Font.Gotham
+        nameLbl.TextSize = 13
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.Parent = row
+
+        row.MouseButton1Click:Connect(function()
+            Config.Whitelist[itemName] = not Config.Whitelist[itemName]
+            local enabled = Config.Whitelist[itemName]
+            box.BackgroundColor3 = enabled and Color3.fromRGB(0, 200, 120) or Color3.fromRGB(50, 40, 65)
+            check.Text = enabled and "✓" or ""
         end)
     end
 
@@ -900,26 +931,18 @@ local function createUI()
         bc.CornerRadius = UDim.new(0, 6)
         bc.Parent = bringBtn
 
-        bringBtn.MouseEnter:Connect(function()
-            TweenService:Create(bringBtn, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(120, 60, 200)
-            }):Play()
-        end)
-        bringBtn.MouseLeave:Connect(function()
-            TweenService:Create(bringBtn, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(80, 40, 140)
-            }):Play()
-        end)
         bringBtn.MouseButton1Click:Connect(function()
             if bringObject(obj) then
                 notify("Bring: " .. obj.Name .. " ✓", Color3.fromRGB(50, 90, 60))
+            else
+                notify("Не могу притянуть (не из белого списка)", Color3.fromRGB(140, 60, 60))
             end
         end)
 
         return card
     end
 
-    makeButton(searchPage, "Найти и показать карточки", Color3.fromRGB(80, 40, 140), function()
+    makeButton(searchPage, "Найти (все объекты, кроме животных)", Color3.fromRGB(80, 40, 140), function()
         local query = searchBox.Text
         if not query or query == "" then return end
 
@@ -935,7 +958,6 @@ local function createUI()
         for _, obj in ipairs(Workspace:GetDescendants()) do
             if obj:IsA("BasePart")
                 and not isAnimal(obj)
-                and not isInBlacklist(obj)
                 and string.find(obj.Name:lower(), query:lower(), 1, true) then
 
                 local hl = Instance.new("Highlight")
@@ -949,7 +971,6 @@ local function createUI()
 
                 makeItemCard(resultsFrame, obj)
                 found = found + 1
-
                 if found >= 50 then break end
             end
         end
@@ -1049,7 +1070,7 @@ local function createUI()
     for _, preset in ipairs(colorPresets) do
         makeButton(settingsPage, "  ●  " .. preset.name, preset.color, function()
             Config.ESPColor = preset.color
-            for obj, data in pairs(ESPObjects) do
+            for _, data in pairs(ESPObjects) do
                 if data[1] then data[1].FillColor = preset.color end
             end
             notify("Цвет ESP: " .. preset.name)
@@ -1122,7 +1143,7 @@ local function createUI()
                 mainFrame.Size = UDim2.new(0, 0, 0, 0)
                 TweenService:Create(mainFrame,
                     TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-                    {Size = UDim2.new(0, 620, 0, 400)}
+                    {Size = UDim2.new(0, 620, 0, 420)}
                 ):Play()
             else
                 TweenService:Create(mainFrame,
@@ -1135,7 +1156,6 @@ local function createUI()
         end
     end)
 
-    -- ====== ЗАКРЫТИЕ ======
     closeBtn.MouseButton1Click:Connect(function()
         TweenService:Create(mainFrame,
             TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
