@@ -1,20 +1,18 @@
 --[[
-    FONDI HUB FIX — 99 Nights in the Forest
+    FONDI HUB — 99 Nights in the Forest
     Полностью открытый код. Без обфускации.
     
     Возможности:
     - Плавное появление с масштабированием
-    - Градиент внутри окна (не перекрывает игру)
+    - Градиент внутри окна
     - Светящаяся рамка (пульсация)
-    - Боковые вкладки с подсветкой активной
-    - Hover-анимации кнопок
-    - Анимированные тогглы
-    - Поиск предметов с карточками
-    - Счётчик найденных
+    - Боковые вкладки
+    - Hover-анимации, тогглы
+    - Поиск с карточками
     - Всплывающие уведомления
-    - Bring через Model / BasePart
+    - Bring через Model / BasePart (с жёстким фильтром)
     - Settings: цвет ESP, радиус, сброс
-    - Горячая клавиша RightShift — показать/скрыть
+    - Горячая клавиша RightShift
 --]]
 
 --// ========== СЕРВИСЫ ==========
@@ -22,7 +20,6 @@ local Players          = game:GetService("Players")
 local Workspace        = game:GetService("Workspace")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local RunService       = game:GetService("RunService")
 local LocalPlayer      = Players.LocalPlayer
 
 --// ========== КОНФИГ ==========
@@ -39,17 +36,70 @@ local Config = {
     }
 }
 
+--// ========== ЧЁРНЫЙ СПИСОК (что НЕ тянуть) ==========
+local Blacklist = {
+    "Campfire", "Fire", "Tree", "Stump", "Rock", "Boulder", "Bush",
+    "Grass", "House", "Wall", "Floor", "Door", "Window", "Bridge",
+    "Tent", "Bed", "Workbench", "Craft", "Station", "Base", "Plot",
+    "Ground", "Terrain", "Water", "Sign", "Lamp", "Light", "Torch",
+    "Snow", "Ice", "Mountain", "Cliff", "Fence", "Gate", "Trap",
+    "Spawn", "SpawnLocation", "Spawner", "Debris", "Effect", "Particle"
+}
+
 local ESPObjects = {}
-local UI = {}
 
 --// ========== УТИЛИТЫ ==========
-local function isTargetItem(object)
-    if not object or not object.Parent or not object:IsA("BasePart") then return false end
-    local lower = object.Name:lower()
-    for _, name in ipairs(Config.TargetItems) do
-        if string.find(lower, name:lower(), 1, true) then
+local function isAnimal(object)
+    if not object then return false end
+    local check = object
+    for i = 1, 3 do
+        if not check then break end
+        if check:IsA("Model") and check:FindFirstChildOfClass("Humanoid") then
             return true
         end
+        if check:FindFirstChildOfClass and check:FindFirstChildOfClass("Humanoid") then
+            return true
+        end
+        check = check.Parent
+    end
+    return false
+end
+
+local function isInBlacklist(object)
+    if not object then return false end
+    local nm = object.Name:lower()
+    local pn = object.Parent and object.Parent.Name:lower() or ""
+    for _, banned in ipairs(Blacklist) do
+        local b = banned:lower()
+        if string.find(nm, b, 1, true) then return true end
+        if string.find(pn, b, 1, true) then return true end
+    end
+    return false
+end
+
+local function isTargetItem(object)
+    if not object or not object.Parent then return false end
+    if not object:IsA("BasePart") then return false end
+    if isAnimal(object) then return false end
+    if isInBlacklist(object) then return false end
+
+    -- Если родитель — Model без Humanoid, но с кучей частей (декор) — мимо
+    local parent = object.Parent
+    if parent and parent:IsA("Model") and not parent:FindFirstChildOfClass("Humanoid") then
+        local partCount = 0
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("BasePart") then
+                partCount = partCount + 1
+                if partCount > 3 then return false end
+            end
+        end
+    end
+
+    local lower = object.Name:lower()
+    for _, name in ipairs(Config.TargetItems) do
+        local n = name:lower()
+        if lower == n then return true end
+        if string.find(lower, n, 1, true) then return true end
     end
     return false
 end
@@ -74,6 +124,14 @@ local function getBringTarget(object)
         return parent, true
     end
     if parent and parent:IsA("Model") then
+        -- Проверяем, что это не декор
+        local partCount = 0
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("BasePart") then
+                partCount = partCount + 1
+                if partCount > 3 then return object, false end
+            end
+        end
         return parent, true
     end
     return object, false
@@ -150,6 +208,8 @@ end)
 local function bringObject(object)
     local hrp = getHRP()
     if not hrp then return false end
+    if isAnimal(object) then return false end
+    if isInBlacklist(object) then return false end
 
     local target, isModel = getBringTarget(object)
     if not target then return false end
@@ -200,9 +260,12 @@ end
 
 local function bringSpecificItem(itemName)
     local count = 0
+    local lowerQuery = itemName:lower()
     for _, object in ipairs(Workspace:GetDescendants()) do
         if object:IsA("BasePart")
-            and string.find(object.Name:lower(), itemName:lower(), 1, true)
+            and not isAnimal(object)
+            and not isInBlacklist(object)
+            and string.find(object.Name:lower(), lowerQuery, 1, true)
             and getDistance(object) <= Config.BringRange then
             if bringObject(object) then count = count + 1 end
         end
@@ -260,7 +323,6 @@ local function createUI()
     mainCorner.CornerRadius = UDim.new(0, 14)
     mainCorner.Parent = mainFrame
 
-    -- Градиент ТОЛЬКО внутри окна
     local mainGradient = Instance.new("UIGradient")
     mainGradient.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(28, 20, 40)),
@@ -269,7 +331,6 @@ local function createUI()
     mainGradient.Rotation = 90
     mainGradient.Parent = mainFrame
 
-    -- Светящаяся рамка
     local glow = Instance.new("UIStroke")
     glow.Color = Color3.fromRGB(180, 80, 255)
     glow.Thickness = 1.5
@@ -291,7 +352,6 @@ local function createUI()
         end
     end)
 
-    -- Плавное появление
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
     mainFrame.BackgroundTransparency = 1
     TweenService:Create(mainFrame,
@@ -561,9 +621,7 @@ local function createUI()
         end)
     end
 
-    UI.notify = notify
-
-    -- ====== ЭЛЕМЕНТЫ UI ======
+    -- ====== ЭЛЕМЕНТЫ ======
     local function makeButton(parent, text, color, callback)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, 0, 0, 34)
@@ -670,7 +728,7 @@ local function createUI()
             if callback then callback(state) end
         end)
 
-        return {container = container, get = function() return state end, set = function(v) state = v; update() end}
+        return {container = container, get = function() return state end}
     end
 
     -- ====== ВКЛАДКА ESP ======
@@ -875,7 +933,11 @@ local function createUI()
 
         local found = 0
         for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and string.find(obj.Name:lower(), query:lower(), 1, true) then
+            if obj:IsA("BasePart")
+                and not isAnimal(obj)
+                and not isInBlacklist(obj)
+                and string.find(obj.Name:lower(), query:lower(), 1, true) then
+
                 local hl = Instance.new("Highlight")
                 hl.Name = "FondiSearchHL"
                 hl.Adornee = obj
